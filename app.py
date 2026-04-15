@@ -2,56 +2,80 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Page Configuration
 st.set_page_config(page_title="Purchasing Dashboard", layout="wide")
 st.title("🛒 Purchasing Analysis Dashboard")
 
-# 2. Load the Data (Ensure the CSV is in the same folder)
 @st.cache_data
-def load_data():
-    df = pd.read_csv("cleaned_purchasing_data.csv")
-    df['Clean Date'] = pd.to_datetime(df['Clean Date'])
-    return df
+def load_and_clean_data():
+    try:
+        # 1. Read the file (trying without header offset first)
+        df = pd.read_csv("cleaned_purchasing_data.csv")
+        
+        # 2. If 'PO_Number' isn't in the first row, it might be the second row
+        if 'PO_Number' not in df.columns:
+            df = pd.read_csv("cleaned_purchasing_data.csv", header=1)
+        
+        # 3. Clean all column names (remove hidden spaces/dots)
+        df.columns = [str(c).strip().replace('.1', '') for c in df.columns]
+        
+        # 4. Define the mapping of what we need
+        # We search for names that 'contain' these keywords to be safe
+        def find_col(name_snippet):
+            for col in df.columns:
+                if name_snippet.lower() in col.lower():
+                    return col
+            return None
 
-try:
-    df = load_data()
+        col_map = {
+            'amount': find_col('PO Estimate Total'),
+            'status': find_col('Approval Status'),
+            'date': find_col('Added time'),
+            'supplier': find_col('Supplier'),
+            'requester': find_col('Requester Name')
+        }
 
-    # 3. Sidebar Filters
-    st.sidebar.header("Filter Data")
-    status_filter = st.sidebar.multiselect("Approval Status", options=df["Approval Status"].unique(), default=df["Approval Status"].unique())
-    df_filtered = df[df["Approval Status"].isin(status_filter)]
+        # Check if we found the vital columns
+        if not col_map['amount'] or not col_map['date']:
+            st.error(f"Could not find required columns. Available: {list(df.columns)[:10]}")
+            return None
 
-    # 4. KPI Metrics
-    total_spent = df_filtered["PO Estimate Total"].sum()
-    po_count = len(df_filtered)
-    avg_val = df_filtered["PO Estimate Total"].mean()
+        # 5. Clean the data
+        df['Amount'] = pd.to_numeric(df[col_map['amount']], errors='coerce')
+        df['Date'] = pd.to_datetime(df[col_map['date']], errors='coerce')
+        df['Status'] = df[col_map['status']].fillna('Unknown')
+        df['Supplier'] = df[col_map['supplier']].fillna('No Supplier')
+        
+        return df.dropna(subset=['Amount', 'Date'])
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        return None
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Spending", f"${total_spent:,.2f}")
-    col2.metric("Total POs", f"{po_count:,}")
-    col3.metric("Avg PO Value", f"${avg_val:,.2f}")
+df = load_and_clean_data()
 
+if df is not None:
+    # --- METRICS ---
+    st.sidebar.header("Filter Results")
+    status_filter = st.sidebar.multiselect("Select Status", options=df["Status"].unique(), default=df["Status"].unique())
+    df_filtered = df[df["Status"].isin(status_filter)]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Spending", f"${df_filtered['Amount'].sum():,.2f}")
+    c2.metric("Total Orders", f"{len(df_filtered):,}")
+    c3.metric("Avg Order", f"${df_filtered['Amount'].mean():,.2f}")
+
+    # --- CHARTS ---
     st.divider()
+    l, r = st.columns(2)
+    
+    with l:
+        st.subheader("Monthly Trend")
+        df_trend = df_filtered.set_index('Date').resample('M')['Amount'].sum().reset_index()
+        st.plotly_chart(px.line(df_trend, x='Date', y='Amount'), use_container_width=True)
 
-    # 5. Visualizations
-    left_col, right_col = st.columns(2)
+    with r:
+        st.subheader("Top Suppliers")
+        top_sup = df_filtered.groupby("Supplier")["Amount"].sum().nlargest(10).reset_index()
+        st.plotly_chart(px.bar(top_sup, x="Amount", y="Supplier", orientation='h'), use_container_width=True)
 
-    with left_col:
-        st.subheader("Spending Over Time")
-        # Aggregating by month
-        df_trend = df_filtered.resample('M', on='Clean Date').sum().reset_index()
-        fig_trend = px.line(df_trend, x='Clean Date', y='PO Estimate Total', markers=True, template="plotly_white")
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-    with right_col:
-        st.subheader("Top 10 Suppliers")
-        top_suppliers = df_filtered.groupby("Supplier")["PO Estimate Total"].sum().nlargest(10).reset_index()
-        fig_sup = px.bar(top_suppliers, x="PO Estimate Total", y="Supplier", orientation='h', color="PO Estimate Total")
-        st.plotly_chart(fig_sup, use_container_width=True)
-
-    # 6. Data Table
-    st.subheader("Raw Data Preview")
-    st.dataframe(df_filtered, use_container_width=True)
-
-except FileNotFoundError:
-    st.error("Please ensure 'cleaned_purchasing_data.csv' is in the same directory as this code.")
+    st.subheader("Recent Activity")
+    st.dataframe(df_filtered[['Date', 'PO_Number', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False))
