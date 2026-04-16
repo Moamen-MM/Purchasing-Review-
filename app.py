@@ -11,7 +11,7 @@ def load_data():
     # 1. Look for any data file
     files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
     if not files:
-        st.error("No data file found! Please upload your data to GitHub.")
+        st.error("No data file found! Please upload 'data.csv' or 'data.xlsx' to GitHub.")
         return None
     
     target = files[0]
@@ -21,7 +21,7 @@ def load_data():
         else:
             df = pd.read_csv(target, sep=None, engine='python')
 
-        # 2. Smart Column Search (Finds names even with extra spaces)
+        # 2. Smart Column Search
         def find_col(possible_names):
             for name in possible_names:
                 for col in df.columns:
@@ -37,7 +37,7 @@ def load_data():
         status_col = find_col(['Approval Status', 'Status'])
 
         if not amt_col or not date_col:
-            st.error(f"Missing essential columns (Amount/Date). Found: {list(df.columns)}")
+            st.error(f"Essential columns missing. Found: {list(df.columns)}")
             return None
 
         df_final['Amount'] = pd.to_numeric(df[amt_col], errors='coerce')
@@ -60,9 +60,10 @@ if df is not None:
     df_f = df[df['Status'].isin(selected)]
 
     # --- KPI ---
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
-    c2.metric("Total Orders", f"{len(df_f):,}")
+    c2.metric("Orders", f"{len(df_f):,}")
+    c3.metric("Avg PO", f"${df_f['Amount'].mean():,.2f}")
 
     st.divider()
 
@@ -70,7 +71,8 @@ if df is not None:
     l, r = st.columns(2)
     with l:
         st.subheader("Monthly Spending Trend")
-        # THE FIX: Try 'ME' (Month End) first, then 'M' for older versions
+        # THE DIRECT FIX: Using 'ME' (Month End) to satisfy the new Pandas error
+        # If 'ME' fails on older versions, it falls back to 'M'
         try:
             trend = df_f.set_index('Date').resample('ME')['Amount'].sum().reset_index()
         except:
@@ -83,5 +85,5 @@ if df is not None:
         top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
         st.plotly_chart(px.bar(top_s, x='Amount', y='Supplier', orientation='h'), use_container_width=True)
 
-    st.subheader("Raw Data View")
+    st.subheader("Purchase Order Log")
     st.dataframe(df_f.sort_values('Date', ascending=False), use_container_width=True)
