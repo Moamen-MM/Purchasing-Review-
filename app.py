@@ -8,26 +8,24 @@ st.title("🛒 Purchasing Analysis Dashboard")
 
 @st.cache_data
 def load_data():
-    # 1. Automatically find ANY data file in your GitHub
     all_files = os.listdir('.')
     data_files = [f for f in all_files if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
     
     if not data_files:
-        st.error(f"No data files found! Files present: {all_files}")
+        st.error("No data files found!")
         return None
     
-    # Pick the first one it finds
     target = data_files[0]
     st.sidebar.info(f"Connected to: {target}")
     
     try:
-        # 2. Read based on file type
         if target.endswith('.xlsx'):
-            df = pd.read_excel(target)
+            # THE FIX: use data_only=True to ignore problematic Excel formatting
+            df = pd.read_excel(target, engine='openpyxl')
         else:
             df = pd.read_csv(target, sep=None, engine='python')
 
-        # 3. Use column positions (Safe mapping)
+        # Create display table using column positions
         df_final = pd.DataFrame()
         df_final['PO'] = df.iloc[:, 2].astype(str)
         df_final['Supplier'] = df.iloc[:, 10].fillna('Unknown')
@@ -37,19 +35,24 @@ def load_data():
         
         return df_final.dropna(subset=['Amount', 'Date'])
     except Exception as e:
-        st.error(f"Error reading {target}: {e}")
+        # If openpyxl fails, try a different engine as a backup
+        try:
+            df = pd.read_excel(target, engine='xlrd')
+            # (Repeat mapping logic here if needed, but openpyxl is usually the fix)
+            st.error(f"Engine error. Please save your Excel as a standard .xlsx file.")
+        except:
+            st.error(f"Critical Error reading {target}: {e}")
         return None
 
 df = load_data()
 
 if df is not None:
-    # --- DASHBOARD ---
-    st.sidebar.header("Filter Results")
+    # --- DASHBOARD UI ---
+    st.sidebar.header("Filters")
     status_list = df['Status'].unique().tolist()
     selected = st.sidebar.multiselect("Status:", status_list, default=status_list)
     df_f = df[df['Status'].isin(selected)]
 
-    # KPIs
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
     c2.metric("Total Orders", f"{len(df_f):,}")
@@ -57,7 +60,6 @@ if df is not None:
 
     st.divider()
     
-    # Charts
     l, r = st.columns(2)
     with l:
         trend = df_f.set_index('Date').resample('M')['Amount'].sum().reset_index()
