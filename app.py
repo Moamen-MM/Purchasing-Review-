@@ -8,22 +8,23 @@ st.title("🛒 Purchasing Analysis Dashboard")
 
 @st.cache_data
 def load_data():
-    # Look for the new CSV file
-    if os.path.exists("data.csv"):
-        target = "data.csv"
-    else:
-        # Fallback to any CSV in the folder
-        files = [f for f in os.listdir('.') if f.endswith('.csv')]
-        if not files:
-            st.error("Please upload 'data.csv' to GitHub.")
-            return None
-        target = files[0]
-
+    # 1. Look for any data file (CSV or Excel)
+    files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
+    if not files:
+        st.error("No data file found! Please upload 'data.csv' or 'data.xlsx' to GitHub.")
+        return None
+    
+    target = files[0]
+    st.sidebar.info(f"Connected to: {target}")
+    
     try:
-        # Read the CSV (sep=None handles commas or semicolons automatically)
-        df = pd.read_csv(target, sep=None, engine='python')
+        # 2. Load the file
+        if target.endswith('.xlsx'):
+            df = pd.read_excel(target, engine='openpyxl', read_only=True)
+        else:
+            df = pd.read_csv(target, sep=None, engine='python')
 
-        # Clean mapping using column positions
+        # 3. Clean mapping using column positions
         df_final = pd.DataFrame()
         df_final['PO'] = df.iloc[:, 2].astype(str)
         df_final['Supplier'] = df.iloc[:, 10].fillna('Unknown')
@@ -33,31 +34,44 @@ def load_data():
         
         return df_final.dropna(subset=['Amount', 'Date'])
     except Exception as e:
-        st.error(f"Error reading CSV: {e}")
+        st.error(f"Error reading file: {e}")
         return None
 
 df = load_data()
 
 if df is not None:
-    # --- UI ---
+    # --- FILTERS ---
     st.sidebar.header("Controls")
-    selected_status = st.sidebar.multiselect("Status:", df['Status'].unique(), default=df['Status'].unique())
+    status_list = df['Status'].unique().tolist()
+    selected_status = st.sidebar.multiselect("Status:", status_list, default=status_list)
     df_f = df[df['Status'].isin(selected_status)]
 
+    # --- KPIs ---
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
     c2.metric("Total Orders", f"{len(df_f):,}")
-    c3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.2f}")
+    c3.metric("Avg Order Value", f"${df_f['Amount'].mean():,.2f}")
 
     st.divider()
     
+    # --- CHARTS ---
     l, r = st.columns(2)
     with l:
-        trend = df_f.set_index('Date').resample('M')['Amount'].sum().reset_index()
-        st.plotly_chart(px.line(trend, x='Date', y='Amount', title="Spending Trend"), use_container_width=True)
+        st.subheader("Monthly Spending Trend")
+        # FIXED: Using 'ME' for Month End to support new Pandas versions
+        try:
+            trend = df_f.set_index('Date').resample('ME')['Amount'].sum().reset_index()
+        except ValueError:
+            # Fallback for older versions
+            trend = df_f.set_index('Date').resample('M')['Amount'].sum().reset_index()
+            
+        st.plotly_chart(px.line(trend, x='Date', y='Amount', markers=True, template="plotly_white"), use_container_width=True)
+    
     with r:
-        top = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
-        st.plotly_chart(px.bar(top, x='Amount', y='Supplier', orientation='h', title="Top Suppliers"), use_container_width=True)
+        st.subheader("Top 10 Suppliers")
+        top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
+        st.plotly_chart(px.bar(top_s, x='Amount', y='Supplier', orientation='h', color='Amount'), use_container_width=True)
 
-    st.subheader("Recent Activity Table")
+    # --- DATA TABLE ---
+    st.subheader("Order Log")
     st.dataframe(df_f.sort_values('Date', ascending=False), use_container_width=True)
