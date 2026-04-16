@@ -11,7 +11,7 @@ def load_data():
     # 1. Automatic file detection
     files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
     if not files:
-        st.error("No data file found in the repository!")
+        st.error("No data file found! Please upload 'data.xlsx' or 'data.csv'.")
         return None
     
     target = files[0]
@@ -33,56 +33,42 @@ def load_data():
         col_sup = find_col(['Supplier', 'Vendor'])
         col_stat = find_col(['Approval Status', 'Status'])
 
-        if not col_amt or not col_date:
-            st.error("Could not find Amount or Date columns.")
-            return None
-
         # 3. Data Cleaning
         df_final = pd.DataFrame()
         df_final['Amount'] = pd.to_numeric(df[col_amt], errors='coerce')
         df_final['Date'] = pd.to_datetime(df[col_date], errors='coerce')
         df_final['Supplier'] = df[col_sup].fillna('Unknown') if col_sup else 'Unknown'
-        df_final['Status'] = df[col_stat].fillna('Pending') if col_stat else 'N/A'
+        df_final['Status'] = df[col_stat].fillna('Pending') if status_col else 'N/A'
         
         return df_final.dropna(subset=['Amount', 'Date'])
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error reading file: {e}")
         return None
 
 df = load_data()
 
 if df is not None:
-    # --- FILTERS ---
-    st.sidebar.header("Dashboard Filters")
+    # FILTERS
     status_list = df['Status'].unique().tolist()
     choice = st.sidebar.multiselect("Select Status", status_list, default=status_list)
     df_f = df[df['Status'].isin(choice)].copy()
 
-    # --- METRICS ---
-    c1, c2, c3 = st.columns(3)
+    # KPIs
+    c1, c2 = st.columns(2)
     c1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
-    c2.metric("Total Orders", f"{len(df_f):,}")
-    c3.metric("Avg Order", f"${df_f['Amount'].mean():,.2f}")
+    c2.metric("Orders", f"{len(df_f):,}")
 
     st.divider()
 
-    # --- TREND CHART (MANUAL GROUPING - BYPASSES THE ERROR) ---
+    # TREND CHART (Safe version for Python 3.14)
     st.subheader("Monthly Spending Trend")
+    # We group by string to avoid the resample frequency error entirely
+    df_f['Month_Key'] = df_f['Date'].dt.strftime('%Y-%m')
+    trend = df_f.groupby('Month_Key')['Amount'].sum().reset_index()
+    trend = trend.sort_values('Month_Key')
     
-    # We create a Year-Month string instead of using .resample()
-    # This is 100% safe from the 'M' vs 'ME' error
-    df_f['Month'] = df_f['Date'].dt.strftime('%Y-%m')
-    trend = df_f.groupby('Month')['Amount'].sum().reset_index()
-    trend = trend.sort_values('Month')
-    
-    fig_trend = px.line(trend, x='Month', y='Amount', markers=True, template="plotly_white")
-    st.plotly_chart(fig_trend, use_container_width=True)
+    st.plotly_chart(px.line(trend, x='Month_Key', y='Amount', markers=True), use_container_width=True)
 
-    # --- TOP SUPPLIERS ---
-    st.subheader("Top 10 Suppliers")
-    top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
-    st.plotly_chart(px.bar(top_s, x='Amount', y='Supplier', orientation='h'), use_container_width=True)
-
-    # --- DATA ---
-    st.subheader("Recent Records")
+    # DATA
+    st.subheader("Details")
     st.dataframe(df_f[['Date', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False), use_container_width=True)
