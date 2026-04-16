@@ -3,7 +3,15 @@ import pandas as pd
 import plotly.express as px
 import os
 
-st.set_page_config(page_title="Purchasing Intelligence", layout="wide")
+st.set_page_config(page_title="Procurement Intelligence", layout="wide", initial_sidebar_state="expanded")
+
+# Custom CSS for a professional look
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_file_exists=True)
 
 @st.cache_data
 def load_data():
@@ -14,67 +22,81 @@ def load_data():
         df = pd.read_excel(target) if target.endswith('.xlsx') else pd.read_csv(target, sep=None, engine='python')
         df.columns = [str(c).strip() for c in df.columns]
         
-        # 1. Target your specific columns directly
+        # Mapping specific to your file structure
         clean = pd.DataFrame()
+        amt_col = next((c for c in df.columns if 'PO Estimate Total' in c or 'Total' in c), None)
+        date_col = next((c for c in df.columns if 'Added time' in c or 'Date' in c), None)
+        sup_col = next((c for c in df.columns if 'Supplier' in c), None)
+        stat_col = next((c for c in df.columns if 'Status' in c or 'State' in c), None)
         
-        # Amount: Priority on 'PO Estimate Total'
-        amt_col = next((c for c in df.columns if 'PO Estimate Total' in c or 'Total' in c), df.columns[36])
         clean['Amount'] = pd.to_numeric(df[amt_col], errors='coerce')
-        
-        # Date: Priority on 'Added time'
-        date_col = next((c for c in df.columns if 'Added time' in c or 'Date' in c), df.columns[27])
         clean['Date'] = pd.to_datetime(df[date_col], errors='coerce')
-        
-        # Supplier & Status
-        sup_col = next((c for c in df.columns if 'Supplier' in c), df.columns[10])
-        stat_col = next((c for c in df.columns if 'Status' in c), df.columns[54])
-        
         clean['Supplier'] = df[sup_col].fillna('Unknown')
         clean['Status'] = df[stat_col].fillna('Unknown')
+        clean['Day'] = clean['Date'].dt.day_name()
+        clean['Month'] = clean['Date'].dt.strftime('%Y-%m')
         
         return clean.dropna(subset=['Amount', 'Date'])
     except: return None
 
 df = load_data()
 
-st.title("🚀 Purchasing Intelligence Dashboard")
-st.markdown("---")
-
+# --- SIDEBAR & NAVIGATION ---
+st.sidebar.title("🛠️ Analysis Tools")
 if df is not None:
-    # --- FILTERS ---
-    st.sidebar.header("Filters")
-    status_list = df['Status'].unique().tolist()
-    selected = st.sidebar.multiselect("Select Status", status_list, default=status_list)
-    df_f = df[df['Status'].isin(selected)]
+    date_range = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
+    status_sel = st.sidebar.multiselect("Approval Status", df['Status'].unique(), default=df['Status'].unique())
+    
+    # Filter Logic
+    mask = (df['Date'].dt.date >= date_range[0]) & (df['Date'].dt.date <= date_range[1]) & (df['Status'].isin(status_sel))
+    df_f = df.loc[mask]
 
-    # --- TOP KPI ROW ---
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Total Spend", f"${df_f['Amount'].sum():,.0f}")
-    k2.metric("Total Orders", len(df_f))
-    k3.metric("Avg Order", f"${df_f['Amount'].mean():,.0f}")
+    # --- MAIN DASHBOARD ---
+    st.title("📈 Procurement Operations Center")
+    
+    # KPI SECTION
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Committed", f"${df_f['Amount'].sum():,.0f}", help="Total value of all filtered POs")
+    c2.metric("PO Count", len(df_f))
+    c3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.0f}")
+    c4.metric("Unique Vendors", df_f['Supplier'].nunique())
 
     st.markdown("---")
 
-    # --- VISUALS ---
-    col_l, col_r = st.columns([2, 1])
-    
-    with col_l:
-        st.subheader("📊 Monthly Spending Trend")
-        df_f['Month'] = df_f['Date'].dt.strftime('%Y-%m')
+    # ROW 1: TRENDS
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("Monthly Financial Outflow")
         trend = df_f.groupby('Month')['Amount'].sum().reset_index().sort_values('Month')
-        st.plotly_chart(px.line(trend, x='Month', y='Amount', markers=True, template="plotly_white"), width='stretch')
+        fig = px.area(trend, x='Month', y='Amount', color_discrete_sequence=['#3366cc'], template="plotly_white")
+        st.plotly_chart(fig, width='stretch')
+    
+    with col2:
+        st.subheader("Status Distribution")
+        fig_pie = px.pie(df_f, names='Status', values='Amount', hole=0.5, 
+                         color_discrete_sequence=px.colors.sequential.RdBu)
+        st.plotly_chart(fig_pie, width='stretch')
 
-    with col_r:
-        st.subheader("🎯 Status Share")
-        st.plotly_chart(px.pie(df_f, names='Status', values='Amount', hole=0.4), width='stretch')
+    # ROW 2: SUPPLIERS & HEATMAP
+    col3, col4 = st.columns(2)
+    with col3:
+        st.subheader("Top 10 High-Value Suppliers")
+        top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
+        fig_bar = px.bar(top_s, x='Amount', y='Supplier', orientation='h', color='Amount', template="plotly_white")
+        st.plotly_chart(fig_bar, width='stretch')
+        
+    with col4:
+        st.subheader("Ordering Activity Heatmap")
+        # Days of week order
+        order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        heat = df_f.groupby('Day')['Amount'].count().reindex(order).reset_index()
+        fig_heat = px.bar(heat, x='Day', y='Amount', title="Volume by Day of Week", color='Amount')
+        st.plotly_chart(fig_heat, width='stretch')
 
-    # --- BAR CHART ---
-    st.subheader("🏆 Top 10 Suppliers")
-    top_10 = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
-    st.plotly_chart(px.bar(top_10, x='Amount', y='Supplier', orientation='h', color='Amount', template="plotly_white"), width='stretch')
+    # ROW 3: RECENT TRANSACTIONS
+    st.subheader("🔍 Detailed Transaction Log")
+    st.dataframe(df_f[['Date', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False), 
+                 width='stretch', height=400)
 
-    # --- TABLE ---
-    with st.expander("📋 View Data Table"):
-        st.dataframe(df_f.sort_values('Date', ascending=False), width='stretch')
 else:
-    st.error("Still having trouble finding the data columns. Please check the Excel file formatting.")
+    st.info("Upload your Excel data to begin analysis.")
