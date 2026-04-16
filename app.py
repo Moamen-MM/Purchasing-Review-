@@ -5,13 +5,12 @@ import os
 
 st.set_page_config(page_title="Procurement Intelligence", layout="wide", initial_sidebar_state="expanded")
 
-# Custom CSS for a professional look
+# Professional Styling
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e6e9ef; }
     </style>
-    """, unsafe_allow_file_exists=True)
+    """, unsafe_allow_html=True)
 
 @st.cache_data
 def load_data():
@@ -22,8 +21,8 @@ def load_data():
         df = pd.read_excel(target) if target.endswith('.xlsx') else pd.read_csv(target, sep=None, engine='python')
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Mapping specific to your file structure
         clean = pd.DataFrame()
+        # Direct Keyword Mapping
         amt_col = next((c for c in df.columns if 'PO Estimate Total' in c or 'Total' in c), None)
         date_col = next((c for c in df.columns if 'Added time' in c or 'Date' in c), None)
         sup_col = next((c for c in df.columns if 'Supplier' in c), None)
@@ -33,6 +32,8 @@ def load_data():
         clean['Date'] = pd.to_datetime(df[date_col], errors='coerce')
         clean['Supplier'] = df[sup_col].fillna('Unknown')
         clean['Status'] = df[stat_col].fillna('Unknown')
+        
+        # Derived features
         clean['Day'] = clean['Date'].dt.day_name()
         clean['Month'] = clean['Date'].dt.strftime('%Y-%m')
         
@@ -41,62 +42,60 @@ def load_data():
 
 df = load_data()
 
-# --- SIDEBAR & NAVIGATION ---
-st.sidebar.title("🛠️ Analysis Tools")
 if df is not None:
-    date_range = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
-    status_sel = st.sidebar.multiselect("Approval Status", df['Status'].unique(), default=df['Status'].unique())
+    # --- SIDEBAR FILTERS ---
+    st.sidebar.title("🛠️ Analysis Tools")
+    # Date Range Filter
+    min_date, max_date = df['Date'].min().date(), df['Date'].max().date()
+    start_date, end_date = st.sidebar.date_input("Date Range", [min_date, max_date])
     
-    # Filter Logic
-    mask = (df['Date'].dt.date >= date_range[0]) & (df['Date'].dt.date <= date_range[1]) & (df['Status'].isin(status_sel))
+    # Status Multi-select
+    all_status = df['Status'].unique().tolist()
+    status_sel = st.sidebar.multiselect("Approval Status", all_status, default=all_status)
+    
+    # Apply Filters
+    mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date) & (df['Status'].isin(status_sel))
     df_f = df.loc[mask]
 
     # --- MAIN DASHBOARD ---
     st.title("📈 Procurement Operations Center")
     
     # KPI SECTION
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Committed", f"${df_f['Amount'].sum():,.0f}", help="Total value of all filtered POs")
-    c2.metric("PO Count", len(df_f))
-    c3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.0f}")
-    c4.metric("Unique Vendors", df_f['Supplier'].nunique())
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Spend", f"${df_f['Amount'].sum():,.0f}")
+    k2.metric("PO Count", f"{len(df_f):,}")
+    k3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.0f}")
+    k4.metric("Active Vendors", df_f['Supplier'].nunique())
 
-    st.markdown("---")
+    st.divider()
 
-    # ROW 1: TRENDS
+    # VISUAL ROW 1: TREND & STATUS
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.subheader("Monthly Financial Outflow")
+        st.subheader("Monthly Spending Outflow")
         trend = df_f.groupby('Month')['Amount'].sum().reset_index().sort_values('Month')
-        fig = px.area(trend, x='Month', y='Amount', color_discrete_sequence=['#3366cc'], template="plotly_white")
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(px.area(trend, x='Month', y='Amount', template="plotly_white", color_discrete_sequence=['#1f77b4']), use_container_width=True)
     
     with col2:
-        st.subheader("Status Distribution")
-        fig_pie = px.pie(df_f, names='Status', values='Amount', hole=0.5, 
-                         color_discrete_sequence=px.colors.sequential.RdBu)
-        st.plotly_chart(fig_pie, width='stretch')
+        st.subheader("Status Breakdown")
+        st.plotly_chart(px.pie(df_f, names='Status', values='Amount', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
 
-    # ROW 2: SUPPLIERS & HEATMAP
+    # VISUAL ROW 2: SUPPLIERS & VOLUME
     col3, col4 = st.columns(2)
     with col3:
         st.subheader("Top 10 High-Value Suppliers")
         top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
-        fig_bar = px.bar(top_s, x='Amount', y='Supplier', orientation='h', color='Amount', template="plotly_white")
-        st.plotly_chart(fig_bar, width='stretch')
+        st.plotly_chart(px.bar(top_s, x='Amount', y='Supplier', orientation='h', color='Amount', template="plotly_white"), use_container_width=True)
         
     with col4:
-        st.subheader("Ordering Activity Heatmap")
-        # Days of week order
-        order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        heat = df_f.groupby('Day')['Amount'].count().reindex(order).reset_index()
-        fig_heat = px.bar(heat, x='Day', y='Amount', title="Volume by Day of Week", color='Amount')
-        st.plotly_chart(fig_heat, width='stretch')
+        st.subheader("Volume by Day of Week")
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_vol = df_f.groupby('Day')['Amount'].count().reindex(days).fillna(0).reset_index()
+        st.plotly_chart(px.bar(day_vol, x='Day', y='Amount', color_discrete_sequence=['#ff7f0e']), use_container_width=True)
 
-    # ROW 3: RECENT TRANSACTIONS
-    st.subheader("🔍 Detailed Transaction Log")
-    st.dataframe(df_f[['Date', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False), 
-                 width='stretch', height=400)
+    # RECENT DATA
+    with st.expander("🔍 Detailed Transaction Log"):
+        st.dataframe(df_f[['Date', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False), use_container_width=True)
 
 else:
-    st.info("Upload your Excel data to begin analysis.")
+    st.info("Waiting for data... Please ensure your Excel file is uploaded correctly.")
