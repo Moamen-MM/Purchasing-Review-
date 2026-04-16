@@ -8,6 +8,7 @@ st.title("🛒 Purchasing Analysis Dashboard")
 
 @st.cache_data
 def load_data():
+    # 1. Automatic file detection
     files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
     if not files:
         st.error("No data file found in the repository!")
@@ -20,14 +21,11 @@ def load_data():
         else:
             df = pd.read_csv(target, sep=None, engine='python')
 
-        # Clean column names
-        df.columns = [str(c).strip() for c in df.columns]
-
-        # Map columns by searching for keywords
+        # 2. Smart column detection
         def find_col(keys):
             for k in keys:
                 for c in df.columns:
-                    if k.lower() in c.lower(): return c
+                    if k.lower() in str(c).lower(): return c
             return None
 
         col_amt = find_col(['PO Estimate Total', 'Amount', 'Total'])
@@ -39,7 +37,7 @@ def load_data():
             st.error("Could not find Amount or Date columns.")
             return None
 
-        # Build final dataframe
+        # 3. Data Cleaning
         df_final = pd.DataFrame()
         df_final['Amount'] = pd.to_numeric(df[col_amt], errors='coerce')
         df_final['Date'] = pd.to_datetime(df[col_date], errors='coerce')
@@ -58,7 +56,7 @@ if df is not None:
     st.sidebar.header("Dashboard Filters")
     status_list = df['Status'].unique().tolist()
     choice = st.sidebar.multiselect("Select Status", status_list, default=status_list)
-    df_f = df[df['Status'].isin(choice)]
+    df_f = df[df['Status'].isin(choice)].copy()
 
     # --- METRICS ---
     c1, c2, c3 = st.columns(3)
@@ -68,21 +66,23 @@ if df is not None:
 
     st.divider()
 
-    # --- TREND CHART ---
+    # --- TREND CHART (MANUAL GROUPING - BYPASSES THE ERROR) ---
     st.subheader("Monthly Spending Trend")
-    # THE CRITICAL FIX: We group by Year and Month manually to avoid the 'M' vs 'ME' error
-    df_f['YearMonth'] = df_f['Date'].dt.to_period('M').dt.to_timestamp()
-    trend = df_f.groupby('YearMonth')['Amount'].sum().reset_index()
     
-    fig_trend = px.line(trend, x='YearMonth', y='Amount', markers=True, template="plotly_white")
+    # We create a Year-Month string instead of using .resample()
+    # This is 100% safe from the 'M' vs 'ME' error
+    df_f['Month'] = df_f['Date'].dt.strftime('%Y-%m')
+    trend = df_f.groupby('Month')['Amount'].sum().reset_index()
+    trend = trend.sort_values('Month')
+    
+    fig_trend = px.line(trend, x='Month', y='Amount', markers=True, template="plotly_white")
     st.plotly_chart(fig_trend, use_container_width=True)
 
-    # --- SUPPLIER BAR CHART ---
+    # --- TOP SUPPLIERS ---
     st.subheader("Top 10 Suppliers")
     top_s = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
-    fig_bar = px.bar(top_s, x='Amount', y='Supplier', orientation='h', color='Amount')
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(px.bar(top_s, x='Amount', y='Supplier', orientation='h'), use_container_width=True)
 
     # --- DATA ---
-    st.subheader("Recent Order Records")
-    st.dataframe(df_f.sort_values('Date', ascending=False), use_container_width=True)
+    st.subheader("Recent Records")
+    st.dataframe(df_f[['Date', 'Supplier', 'Amount', 'Status']].sort_values('Date', ascending=False), use_container_width=True)
