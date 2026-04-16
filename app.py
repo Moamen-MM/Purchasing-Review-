@@ -8,31 +8,25 @@ st.title("🛒 Purchasing Analysis Dashboard")
 
 @st.cache_data
 def load_data():
-    # Find any data file
+    # Find any data file in the repo
     files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.csv')) and not f.startswith('.')]
     if not files:
         st.error("No data files found in GitHub!")
         return None
     
     target = files[0]
-    st.sidebar.info(f"Reading: {target}")
+    st.sidebar.info(f"Attempting to read: {target}")
     
     try:
         if target.endswith('.xlsx'):
-            try:
-                # Primary attempt: Read normally
-                df = pd.read_excel(target, engine='openpyxl')
-            except ValueError:
-                # Secondary attempt: Use 'xlrd' or a cleaner read if styles are broken
-                st.warning("Excel styles are causing an error. Trying to read raw values...")
-                # We try to read it by bypassing the style engine if possible
-                df = pd.read_excel(target, engine='openpyxl', read_only=True)
+            # THE FIX: use read_only=True to ignore the broken Excel styles/validations
+            df = pd.read_excel(target, engine='openpyxl', read_only=True)
         else:
-            # For CSVs, we use 'sep=None' to automatically find commas or semicolons
+            # Auto-detect separator for CSVs
             df = pd.read_csv(target, sep=None, engine='python')
 
         # Robust Column Mapping (using positions)
-        # Based on your file: PO(2), Supplier(10), Date(27), Amount(36), Status(54)
+        # PO(2), Supplier(10), Date(27), Amount(36), Status(54)
         df_final = pd.DataFrame()
         df_final['PO'] = df.iloc[:, 2].astype(str)
         df_final['Supplier'] = df.iloc[:, 10].fillna('Unknown')
@@ -43,22 +37,30 @@ def load_data():
         return df_final.dropna(subset=['Amount', 'Date'])
         
     except Exception as e:
-        st.error(f"Could not read the file. Error: {e}")
-        st.info("💡 QUICK FIX: Open your Excel file, 'Save As' a CSV (Comma Delimited), and upload it as 'data.csv'.")
+        st.error(f"Critical Error: {e}")
+        st.markdown("""
+        ### ⚠️ How to fix this error:
+        Your Excel file has internal 'Data Validation' or 'Styles' that are crashing the reader. 
+        **Please do the following:**
+        1. Open your Excel file on your computer.
+        2. Go to **File > Save As**.
+        3. Select **CSV (Comma Delimited) (*.csv)**.
+        4. Upload that **new .csv file** to GitHub and delete the .xlsx file.
+        """)
         return None
 
 df = load_data()
 
 if df is not None:
     # --- DASHBOARD ---
-    st.sidebar.header("Filters")
+    st.sidebar.header("Dashboard Controls")
     selected_status = st.sidebar.multiselect("Status:", df['Status'].unique(), default=df['Status'].unique())
     df_f = df[df['Status'].isin(selected_status)]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
-    col2.metric("Orders", f"{len(df_f):,}")
-    col3.metric("Avg PO", f"${df_f['Amount'].mean():,.2f}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Spending", f"${df_f['Amount'].sum():,.2f}")
+    c2.metric("Orders", f"{len(df_f):,}")
+    c3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.2f}")
 
     st.divider()
     
@@ -70,5 +72,5 @@ if df is not None:
         top = df_f.groupby('Supplier')['Amount'].sum().nlargest(10).reset_index()
         st.plotly_chart(px.bar(top, x='Amount', y='Supplier', orientation='h', title="Top 10 Suppliers"), use_container_width=True)
 
-    st.subheader("Recent Orders")
+    st.subheader("Purchase Order Log")
     st.dataframe(df_f.sort_values('Date', ascending=False), use_container_width=True)
