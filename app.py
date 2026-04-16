@@ -3,13 +3,12 @@ import pandas as pd
 import plotly.express as px
 import os
 
-st.set_page_config(page_title="Executive Procurement Insights", layout="wide")
+st.set_page_config(page_title="Procurement Master Dashboard", layout="wide")
 
-# Custom CSS for a professional "Dark Mode" feel to charts
+# Professional Styling
 st.markdown("""
     <style>
     .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #f0f2f6; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    [data-testid="stSidebar"] { background-color: #f8f9fa; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -22,6 +21,7 @@ def load_data():
         df = pd.read_excel(target) if target.endswith('.xlsx') else pd.read_csv(target, sep=None, engine='python')
         df.columns = [str(c).strip() for c in df.columns]
         
+        # Super-Aggressive Column Mapping
         def find_col(keys):
             for k in keys:
                 for c in df.columns:
@@ -29,18 +29,18 @@ def load_data():
             return None
 
         clean = pd.DataFrame()
-        amt_col = find_col(['PO Estimate Total', 'Total', 'Amount'])
-        date_col = find_col(['Added time', 'Date', 'Created'])
-        sup_col = find_col(['Supplier', 'Vendor'])
-        stat_col = find_col(['Status', 'Approval'])
+        # Mapping the "Big 4"
+        amt_col = find_col(['PO Estimate Total', 'Total', 'Amount', 'Value'])
+        date_col = find_col(['Added time', 'Date', 'Created', 'Time'])
+        sup_col = find_col(['Supplier', 'Vendor', 'Company'])
+        stat_col = find_col(['Status', 'Approval', 'State'])
 
         if amt_col and date_col:
             clean['Amount'] = pd.to_numeric(df[amt_col], errors='coerce')
             clean['Date'] = pd.to_datetime(df[date_col], errors='coerce')
-            clean['Supplier'] = df[sup_col].fillna('Unknown')
-            clean['Status'] = df[stat_col].fillna('N/A')
+            clean['Supplier'] = df[sup_col].fillna('Unknown') if sup_col else 'Unknown'
+            clean['Status'] = df[stat_col].fillna('N/A') if stat_col else 'N/A'
             clean['Month'] = clean['Date'].dt.strftime('%Y-%m')
-            clean['Year'] = clean['Date'].dt.year
             return clean.dropna(subset=['Amount', 'Date'])
         return None
     except: return None
@@ -48,69 +48,57 @@ def load_data():
 df = load_data()
 
 if df is not None:
-    # --- SIDEBAR NAV ---
-    st.sidebar.title("🎮 Dashboard Controls")
+    # --- SIDEBAR FILTERS ---
+    st.sidebar.title("🔍 Deep Dive Filters")
     
-    # Date Slider
+    # 1. Date Range
     min_d, max_d = df['Date'].min().date(), df['Date'].max().date()
-    date_range = st.sidebar.slider("Timeline Selection", min_d, max_d, (min_d, max_d))
+    start_d, end_d = st.sidebar.date_input("Date Range", [min_d, max_d])
     
-    # Category Filters
-    all_suppliers = sorted(df['Supplier'].unique().tolist())
-    selected_suppliers = st.sidebar.multiselect("Filter Suppliers", all_suppliers, default=all_suppliers[:10] if len(all_suppliers) > 10 else all_suppliers)
-    
-    all_stats = df['Status'].unique().tolist()
-    selected_stats = st.sidebar.multiselect("Filter Status", all_stats, default=all_stats)
+    # 2. Status Selection
+    all_stats = sorted(df['Status'].unique().tolist())
+    status_sel = st.sidebar.multiselect("Filter by Status", all_stats, default=all_stats)
 
-    # Filter Logic
-    mask = (df['Date'].dt.date >= date_range[0]) & \
-           (df['Date'].dt.date <= date_range[1]) & \
-           (df['Status'].isin(selected_stats)) & \
-           (df['Supplier'].isin(selected_suppliers))
-    
-    df_f = df.loc[mask]
+    # Apply Filters
+    mask = (df['Date'].dt.date >= start_d) & (df['Date'].dt.date <= end_d) & (df['Status'].isin(status_sel))
+    df_f = df.loc[mask].copy()
 
-    # --- MAIN CONTENT ---
-    st.title("🛡️ Procurement Intelligence Command")
-    st.caption(f"Analyzing {len(df_f)} records from {date_range[0]} to {date_range[1]}")
+    # --- MAIN DASHBOARD ---
+    st.title("📊 Procurement Intelligence Command")
     
-    # Executive KPIs
-    k1, k2, k3, k4 = st.columns(4)
-    total_spend = df_f['Amount'].sum()
-    k1.metric("Total Spend", f"${total_spend:,.0f}")
-    k2.metric("Orders Processed", f"{len(df_f):,}")
-    k3.metric("Avg PO Value", f"${df_f['Amount'].mean():,.0f}")
-    k4.metric("Vendors Engaged", df_f['Supplier'].nunique())
+    # Row 1: Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Commited Value", f"${df_f['Amount'].sum():,.0f}")
+    m2.metric("PO Volume", f"{len(df_f):,}")
+    m3.metric("Avg Order Value", f"${df_f['Amount'].mean():,.0f}")
+    m4.metric("Active Vendors", df_f['Supplier'].nunique())
 
     st.divider()
 
-    # Visual Row 1: Time & Composition
-    row1_left, row1_right = st.columns([2, 1])
+    # Row 2: Financial Trends
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.subheader("📈 Spending Trajectory (Cumulative)")
+        # Calculate cumulative spend over time
+        trend = df_f.sort_values('Date')
+        trend['Cumulative'] = trend['Amount'].cumsum()
+        st.plotly_chart(px.area(trend, x='Date', y='Cumulative', template="plotly_white", color_discrete_sequence=['#007bff']), use_container_width=True)
     
-    with row1_left:
-        st.subheader("📈 Financial Velocity (Monthly)")
-        trend = df_f.groupby('Month')['Amount'].sum().reset_index().sort_values('Month')
-        fig_line = px.area(trend, x='Month', y='Amount', template="plotly_white", color_discrete_sequence=['#007bff'])
-        fig_line.update_layout(margin=dict(l=0, r=0, t=20, b=0))
-        st.plotly_chart(fig_line, use_container_width=True)
-    
-    with row1_right:
-        st.subheader("🎯 Status Distribution")
-        fig_pie = px.pie(df_f, names='Status', values='Amount', hole=0.5, color_discrete_sequence=px.colors.qualitative.Safe)
-        fig_pie.update_layout(margin=dict(l=0, r=0, t=20, b=0))
-        st.plotly_chart(fig_pie, use_container_width=True)
+    with c2:
+        st.subheader("🎯 Portfolio by Status")
+        st.plotly_chart(px.pie(df_f, names='Status', values='Amount', hole=0.5), use_container_width=True)
 
-    # Visual Row 2: Supplier Rankings
-    st.subheader("🏆 Top 15 Suppliers by Committed Value")
+    # Row 3: Vendor Analysis
+    st.subheader("🏆 Vendor Concentration (Top 15)")
     top_v = df_f.groupby('Supplier')['Amount'].sum().nlargest(15).reset_index()
-    fig_bar = px.bar(top_v, x='Amount', y='Supplier', orientation='h', 
-                     color='Amount', color_continuous_scale='Blues', text_auto='.2s')
-    fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
+    fig_bar = px.bar(top_v, x='Amount', y='Supplier', orientation='h', color='Amount', 
+                     color_continuous_scale='Blues', text_auto='.2s')
+    fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    # Visual Row 3: Detail Explorer
-    with st.expander("🔍 Itemized Procurement Log"):
+    # Row 4: Raw Data
+    with st.expander("🔍 View Transaction-Level Data"):
         st.dataframe(df_f.sort_values('Date', ascending=False), use_container_width=True)
 
 else:
-    st.info("System Standby. Connect your data.xlsx to begin.")
+    st.error("❌ Data Mapping Failed. Please check that your Excel file has 'PO Estimate Total' and 'Added time' columns.")
